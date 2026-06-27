@@ -65,6 +65,16 @@ body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; backgrou
 .task-text { font-size: 13.5px; line-height: 1.55; flex: 1; }
 .task-notes { margin-top: 5px; font-size: 12px; color: #636e72; background: #fff; border-left: 3px solid #dfe6e9; padding: 6px 10px; border-radius: 0 6px 6px 0; line-height: 1.65; }
 .task-notes a { color: #6c5ce7; word-break: break-all; }
+.notes-tabs { display: flex; gap: 0; margin-top: 6px; border-bottom: 1.5px solid #f0f0f0; }
+.notes-tab { font-size: 11px; font-weight: 600; padding: 4px 10px; cursor: pointer; color: #b2bec3; border-bottom: 2px solid transparent; margin-bottom: -1.5px; transition: all 0.15s; }
+.notes-tab.active { color: #6c5ce7; border-bottom-color: #6c5ce7; }
+.notes-content { margin-top: 4px; font-size: 12px; color: #636e72; background: #fff; border-left: 3px solid #dfe6e9; padding: 6px 10px; border-radius: 0 6px 6px 0; line-height: 1.65; min-height: 28px; }
+.notes-content.feedback { border-left-color: #fd79a8; }
+.notes-content a { color: #6c5ce7; word-break: break-all; }
+.notes-content.empty { color: #d0d0d0; font-style: italic; }
+.edit-notes-tabs { display: flex; gap: 0; margin-bottom: 4px; border-bottom: 1.5px solid #f0f0f0; }
+.edit-notes-tab { font-size: 11px; font-weight: 600; padding: 4px 10px; cursor: pointer; color: #b2bec3; border-bottom: 2px solid transparent; margin-bottom: -1.5px; transition: all 0.15s; }
+.edit-notes-tab.active { color: #6c5ce7; border-bottom-color: #6c5ce7; }
 .task-edit-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 10px 12px; border-radius: 10px; background: #fafafa; border: 1.5px solid #e0e0e0; transition: opacity 0.15s; }
 .task-edit-row.drag-over { outline: 2px dashed #6c5ce7; background: #f8f6ff; }
 .task-edit-row.dragging { opacity: 0.35; }
@@ -179,6 +189,7 @@ let editMode = false;
 let nextId = 500;
 let saveTimer = null;
 let undoStack = [];
+let noteTabState = {}; // 각 항목의 탭 상태 저장
 
 function getActiveWeek() { return weeks.find(w => w.id === activeWeekId) || weeks[0]; }
 
@@ -472,7 +483,6 @@ function render() {
         topRow.className = 'edit-top-row';
         const handle = document.createElement('span');
         handle.className = 'drag-handle'; handle.textContent = '⠿'; handle.title = '드래그로 항목 순서 변경';
-        // input 위에서 드래그 막기 (타이핑 가능하도록)
         const inp = document.createElement('input');
         inp.type = 'text'; inp.value = t.text; inp.placeholder = '항목 내용';
         inp.addEventListener('mousedown', e => { row.draggable = false; });
@@ -482,13 +492,30 @@ function render() {
         applyBold(inp, v => { t.text = v; });
         topRow.appendChild(handle);
         topRow.appendChild(inp);
-        // textarea
+
+        // 편집 탭 (디테일 / 피드백)
+        const editTabKey = week.id + '_edit_' + t.id;
+        if (!noteTabState[editTabKey]) noteTabState[editTabKey] = 'detail';
+        const editTabsDiv = document.createElement('div');
+        editTabsDiv.className = 'edit-notes-tabs';
+        ['detail','feedback'].forEach(tabName => {
+          const et = document.createElement('span');
+          et.className = 'edit-notes-tab' + (noteTabState[editTabKey]===tabName?' active':'');
+          et.textContent = tabName==='detail' ? '📋 디테일' : '💬 피드백';
+          et.onclick = e => { e.stopPropagation(); noteTabState[editTabKey] = tabName; render(); };
+          editTabsDiv.appendChild(et);
+        });
+
+        // textarea (디테일 or 피드백)
         const ta = document.createElement('textarea');
-        ta.placeholder = '세부 메모 (선택)'; ta.value = t.notes || '';
+        const isDetailTab = noteTabState[editTabKey] === 'detail';
+        ta.placeholder = isDetailTab ? '디테일 내용 (선택)' : '피드백 내용 (선택)';
+        ta.value = isDetailTab ? (t.notes || '') : (t.feedback || '');
         ta.addEventListener('mousedown', e => { row.draggable = false; });
         ta.addEventListener('blur', () => { row.draggable = true; scheduleSave(); });
-        ta.oninput = () => { t.notes = ta.value; };
-        applyBold(ta, v => { t.notes = v; });
+        ta.oninput = () => { if (noteTabState[editTabKey]==='detail') t.notes = ta.value; else t.feedback = ta.value; };
+        applyBold(ta, v => { if (noteTabState[editTabKey]==='detail') t.notes = v; else t.feedback = v; });
+
         // 삭제 버튼
         const btnWrap = document.createElement('div');
         btnWrap.className = 'edit-row-btns';
@@ -496,24 +523,50 @@ function render() {
         delBtn.className = 'btn-del'; delBtn.textContent = '삭제';
         delBtn.onclick = () => deleteTask(ci, ti);
         btnWrap.appendChild(delBtn);
-        row.appendChild(topRow); row.appendChild(ta); row.appendChild(btnWrap);
+        row.appendChild(topRow); row.appendChild(editTabsDiv); row.appendChild(ta); row.appendChild(btnWrap);
         list.appendChild(row);
       } else {
         // 보기 모드
         const item = document.createElement('div');
         const isDone = (week.checked || {})[t.id];
         item.className = 'task-item' + (isDone ? ' done' : '');
+        const hasNotes = t.notes && t.notes.trim();
+        const hasFeedback = t.feedback && t.feedback.trim();
+        const showTabs = hasNotes || hasFeedback;
+        // 탭 상태 키
+        const tabKey = week.id + '_' + t.id;
+        if (!noteTabState[tabKey]) noteTabState[tabKey] = 'detail';
+        const activeTab = noteTabState[tabKey];
+
         item.innerHTML =
           '<div class="checkbox"><span class="checkmark">&#10003;</span></div>' +
           '<div style="flex:1"><div class="task-text">' + formatText(t.text) + '</div>' +
-          (t.notes ? '<div class="task-notes">' + formatNotes(t.notes) + '</div>' : '') + '</div>';
+          (showTabs ?
+            '<div class="notes-tabs">' +
+            '<span class="notes-tab' + (activeTab==='detail'?' active':'') + '" data-tab="detail" data-key="' + tabKey + '">📋 디테일</span>' +
+            '<span class="notes-tab' + (activeTab==='feedback'?' active':'') + '" data-tab="feedback" data-key="' + tabKey + '">💬 피드백</span>' +
+            '</div>' +
+            '<div class="notes-content' + (activeTab==='feedback'?' feedback':'') + (activeTab==='detail'&&!hasNotes?' empty':'') + (activeTab==='feedback'&&!hasFeedback?' empty':'') + '">' +
+            (activeTab==='detail' ? (hasNotes ? formatNotes(t.notes) : '디테일 내용 없음') : (hasFeedback ? formatNotes(t.feedback) : '피드백 없음')) +
+            '</div>'
+          : '') +
+          '</div>';
+
+        // 탭 클릭 이벤트
+        item.querySelectorAll('.notes-tab').forEach(tab => {
+          tab.onclick = e => {
+            e.stopPropagation();
+            noteTabState[tab.dataset.key] = tab.dataset.tab;
+            render();
+          };
+        });
         const toggle = () => {
           if (!week.checked) week.checked = {};
           week.checked[t.id] = !week.checked[t.id];
           scheduleSave(); render();
         };
         item.querySelector('.checkbox').onclick = e => { e.stopPropagation(); toggle(); };
-        item.onclick = toggle;
+        item.onclick = e => { if (e.target.classList.contains('notes-tab')) return; toggle(); };
         list.appendChild(item);
       }
     });
