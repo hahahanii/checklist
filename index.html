@@ -15,6 +15,8 @@ body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; backgrou
 .header-btns { display: flex; gap: 7px; }
 .btn-new-week { padding: 7px 13px; border-radius: 20px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: #6c5ce7; color: #fff; transition: all 0.15s; white-space: nowrap; }
 .btn-new-week:hover { background: #5a4bd1; }
+.btn-undo { padding: 7px 13px; border-radius: 20px; border: 1.5px solid #dfe6e9; font-size: 12px; font-weight: 700; cursor: pointer; background: #fff; color: #636e72; transition: all 0.15s; white-space: nowrap; }
+.btn-undo:hover:not(:disabled) { background: #f0eeff; color: #6c5ce7; border-color: #6c5ce7; }
 .edit-toggle-btn { padding: 7px 13px; border-radius: 20px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: #f0eeff; color: #6c5ce7; transition: all 0.15s; white-space: nowrap; }
 .edit-toggle-btn.on { background: #6c5ce7; color: #fff; }
 
@@ -27,6 +29,8 @@ body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; backgrou
 .tab .tab-rate { font-size: 10px; font-weight: 500; margin-left: 5px; background: #f0eeff; color: #6c5ce7; padding: 1px 6px; border-radius: 10px; }
 .tab.active .tab-rate { background: #6c5ce7; color: #fff; }
 .tab.past .tab-rate { background: #f5f6fa; color: #b2bec3; }
+.tab-del { margin-left: 6px; font-size: 10px; color: #b2bec3; padding: 1px 4px; border-radius: 50%; transition: all 0.15s; }
+.tab-del:hover { background: #ffe0e0; color: #e17055; }
 
 /* 콘텐츠 */
 .content { padding: 20px; }
@@ -114,6 +118,7 @@ body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; backgrou
   <div class="header-top">
     <div class="app-title">📋 업무 체크리스트</div>
     <div class="header-btns">
+      <button class="btn-undo" id="undoBtn" onclick="undo()" disabled style="opacity:0.4" title="실행 취소 (Ctrl+Z)">↩ 취소</button>
       <button class="edit-toggle-btn" id="editToggleBtn" onclick="toggleEditMode()">✏️ 편집</button>
       <button class="btn-new-week" onclick="showNewWeekModal()">＋ 새 주차</button>
     </div>
@@ -192,9 +197,10 @@ let collapsed = {};
 let editMode = false;
 let nextId = 500;
 let saveTimer = null;
+let undoStack = []; // 실행 취소 스택 (최대 20개)
 
 function getActiveWeek() { return weeks.find(w => w.id === activeWeekId) || weeks[0]; }
-function isLatestWeek() { return weeks.length > 0 && getActiveWeek().id === weeks[weeks.length - 1].id; }
+function isLatestWeek() { return true; } // 모든 주차 편집 가능
 
 // ===================== 저장 =====================
 async function loadFromDB() {
@@ -214,6 +220,28 @@ async function loadFromDB() {
     setSaveStatus('error');
   }
   render();
+}
+
+function saveSnapshot() {
+  // 현재 상태를 스냅샷으로 저장 (최대 20개)
+  undoStack.push(JSON.stringify(weeks));
+  if (undoStack.length > 20) undoStack.shift();
+  updateUndoBtn();
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  weeks = JSON.parse(undoStack.pop());
+  updateUndoBtn();
+  scheduleSave();
+  render();
+}
+
+function updateUndoBtn() {
+  const btn = document.getElementById('undoBtn');
+  if (!btn) return;
+  btn.disabled = undoStack.length === 0;
+  btn.style.opacity = undoStack.length === 0 ? '0.4' : '1';
 }
 
 function scheduleSave() {
@@ -245,10 +273,10 @@ function renderTabs() {
     const done = Object.values(w.checked || {}).filter(Boolean).length;
     const rate = total ? Math.round(done / total * 100) : 0;
     const isActive = w.id === activeWeekId;
-    const isLatest = w.id === weeks[weeks.length - 1].id;
     const tab = document.createElement('div');
-    tab.className = 'tab' + (isActive ? ' active' : '') + (!isLatest ? ' past' : '');
-    tab.innerHTML = w.label + '<span class="tab-rate">' + rate + '%</span>';
+    tab.className = 'tab' + (isActive ? ' active' : '');
+    tab.innerHTML = w.label + '<span class="tab-rate">' + rate + '%</span>' +
+      '<span class="tab-del" onclick="event.stopPropagation(); deleteWeek(\'' + w.id + '\')" title="주차 삭제">✕</span>';
     tab.onclick = () => { activeWeekId = w.id; activeFilter = 'all'; editMode = false; updateEditBtn(); render(); };
     wrap.appendChild(tab);
   });
@@ -281,8 +309,8 @@ function render() {
   // 주차 헤더
   html += '<div class="week-header">';
   html += '<div class="week-title-wrap"><span class="week-title">' + esc(week.label) + '</span>';
-  html += '<span class="week-badge' + (isPast ? ' past' : '') + '">' + (isPast ? '✓ 완료됨' : '진행중') + '</span></div>';
-  if (isPast) html += '<button class="btn-del-week" onclick="deleteWeek(\'' + week.id + '\')">삭제</button>';
+  html += '<span class="week-badge">진행중</span></div>';
+
   html += '</div>';
 
   // 진행률
@@ -292,8 +320,7 @@ function render() {
   html += '<span class="save-status"><div class="save-dot saved" id="saveDot"></div><span id="saveText">저장됨 ✓</span></span></div>';
   html += '</div>';
 
-  // 과거 주차 안내
-  if (isPast) html += '<div class="past-notice">📁 지난 주차 기록입니다. 읽기 전용으로 보관됩니다.</div>';
+  // 과거 주차 안내 (편집 가능하므로 표시 안함)
 
   // 필터 버튼
   html += '<div class="filter-row" id="filterRow"></div>';
@@ -361,16 +388,14 @@ function render() {
       } else {
         const item = document.createElement('div');
         const isDone = (week.checked || {})[t.id];
-        item.className = 'task-item' + (isDone ? ' done' : '') + (isPast ? ' readonly' : '');
+        item.className = 'task-item' + (isDone ? ' done' : '');
         item.innerHTML =
           '<div class="checkbox"><span class="checkmark">&#10003;</span></div>' +
           '<div style="flex:1"><div class="task-text">' + formatText(t.text) + '</div>' +
           (t.notes ? '<div class="task-notes">' + formatNotes(t.notes) + '</div>' : '') + '</div>';
-        if (!isPast) {
-          const toggle = () => { if (!week.checked) week.checked = {}; week.checked[t.id] = !week.checked[t.id]; scheduleSave(); render(); };
-          item.querySelector('.checkbox').onclick = e => { e.stopPropagation(); toggle(); };
-          item.onclick = toggle;
-        }
+        const toggle = () => { if (!week.checked) week.checked = {}; week.checked[t.id] = !week.checked[t.id]; scheduleSave(); render(); };
+        item.querySelector('.checkbox').onclick = e => { e.stopPropagation(); toggle(); };
+        item.onclick = toggle;
         list.appendChild(item);
       }
     });
@@ -406,17 +431,18 @@ function toggleEditMode() {
   if (!editMode) scheduleSave();
   render();
 }
-function updateCatLabel(ci, val) { getActiveWeek().categories[ci].label = val; renderTabs(); }
-function updateCatColor(ci, val) { getActiveWeek().categories[ci].color = val; render(); }
+function updateCatLabel(ci, val) { saveSnapshot(); getActiveWeek().categories[ci].label = val; renderTabs(); }
+function updateCatColor(ci, val) { saveSnapshot(); getActiveWeek().categories[ci].color = val; render(); }
 function deleteCat(ci) {
+  saveSnapshot();
   if (!confirm('"' + getActiveWeek().categories[ci].label + '" 카테고리를 삭제할까요?')) return;
   getActiveWeek().categories.splice(ci, 1);
   activeFilter = 'all'; scheduleSave(); render();
 }
 function updateTaskText(ci, ti, val) { getActiveWeek().categories[ci].tasks[ti].text = val; }
 function updateTaskNotes(ci, ti, val) { getActiveWeek().categories[ci].tasks[ti].notes = val; }
-function deleteTask(ci, ti) { getActiveWeek().categories[ci].tasks.splice(ti, 1); scheduleSave(); render(); }
-function addTask(ci) { getActiveWeek().categories[ci].tasks.push({ id: nextId++, text: '', notes: '' }); scheduleSave(); render(); }
+function deleteTask(ci, ti) { saveSnapshot(); getActiveWeek().categories[ci].tasks.splice(ti, 1); scheduleSave(); render(); }
+function addTask(ci) { saveSnapshot(); getActiveWeek().categories[ci].tasks.push({ id: nextId++, text: '', notes: '' }); scheduleSave(); render(); }
 
 // ===================== 새 주차 =====================
 function showNewWeekModal() {
@@ -453,6 +479,7 @@ function confirmNewWeek() {
 function deleteWeek(wid) {
   const w = weeks.find(x => x.id === wid);
   if (!confirm('"' + w.label + '" 주차를 삭제할까요?')) return;
+  saveSnapshot();
   weeks = weeks.filter(x => x.id !== wid);
   activeWeekId = weeks[weeks.length - 1].id;
   scheduleSave(); render();
@@ -496,29 +523,50 @@ function esc(str) {
   return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Ctrl+B 지원: 편집 input/textarea에 이벤트 위임
+// Ctrl+B 지원: 포커스 유지하면서 굵게 처리
 document.addEventListener('keydown', function(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
     const el = document.activeElement;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-      e.preventDefault();
-      const start = el.selectionStart;
-      const end = el.selectionEnd;
-      const val = el.value;
-      const selected = val.slice(start, end);
-      if (!selected) return;
-      // 이미 굵게 처리된 경우 토글(제거)
-      if (selected.startsWith('**') && selected.endsWith('**')) {
-        const inner = selected.slice(2, -2);
-        el.value = val.slice(0, start) + inner + val.slice(end);
-        el.setSelectionRange(start, start + inner.length);
-      } else {
-        const replaced = '**' + selected + '**';
-        el.value = val.slice(0, start) + replaced + val.slice(end);
-        el.setSelectionRange(start, start + replaced.length);
-      }
-      el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
+    e.preventDefault();
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const val = el.value;
+    const selected = val.slice(start, end);
+    if (!selected) return;
+
+    let newVal, newStart, newEnd;
+    if (selected.startsWith('**') && selected.endsWith('**') && selected.length > 4) {
+      const inner = selected.slice(2, -2);
+      newVal = val.slice(0, start) + inner + val.slice(end);
+      newStart = start; newEnd = start + inner.length;
+    } else {
+      const replaced = '**' + selected + '**';
+      newVal = val.slice(0, start) + replaced + val.slice(end);
+      newStart = start; newEnd = start + replaced.length;
     }
+
+    el.value = newVal;
+    el.setSelectionRange(newStart, newEnd);
+    el.focus();
+
+    // render() 없이 데이터만 업데이트
+    const onInputAttr = el.getAttribute('oninput') || '';
+    const textMatch = onInputAttr.match(/updateTaskText\((\d+),(\d+)/);
+    const notesMatch = onInputAttr.match(/updateTaskNotes\((\d+),(\d+)/);
+    if (textMatch) { updateTaskText(parseInt(textMatch[1]), parseInt(textMatch[2]), newVal); scheduleSave(); }
+    else if (notesMatch) { updateTaskNotes(parseInt(notesMatch[1]), parseInt(notesMatch[2]), newVal); scheduleSave(); }
+  }
+});
+
+// Ctrl+Z 실행 취소
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    const el = document.activeElement;
+    // input/textarea 안에서는 기본 동작 유지
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+    undo();
   }
 });
 
