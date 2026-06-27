@@ -364,7 +364,7 @@ function render() {
         item.className = 'task-item' + (isDone ? ' done' : '') + (isPast ? ' readonly' : '');
         item.innerHTML =
           '<div class="checkbox"><span class="checkmark">&#10003;</span></div>' +
-          '<div style="flex:1"><div class="task-text">' + esc(t.text) + '</div>' +
+          '<div style="flex:1"><div class="task-text">' + formatText(t.text) + '</div>' +
           (t.notes ? '<div class="task-notes">' + formatNotes(t.notes) + '</div>' : '') + '</div>';
         if (!isPast) {
           const toggle = () => { if (!week.checked) week.checked = {}; week.checked[t.id] = !week.checked[t.id]; scheduleSave(); render(); };
@@ -482,15 +482,45 @@ function confirmAddCat() {
   closeModal(); scheduleSave(); render();
 }
 
-function formatNotes(notes) {
-  return notes
+function formatText(str) {
+  // **굵게** 처리
+  return (str||'')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/https?:\/\/\S+/g, url => '<a href="' + url + '" target="_blank">' + url + '</a>')
-    .replace(/\n/g, '<br>');
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/https?:\/\/\S+/g, url => '<a href="' + url + '" target="_blank">' + url + '</a>');
+}
+function formatNotes(notes) {
+  return formatText(notes).replace(/\n/g, '<br>');
 }
 function esc(str) {
   return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// Ctrl+B 지원: 편집 input/textarea에 이벤트 위임
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+      e.preventDefault();
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const val = el.value;
+      const selected = val.slice(start, end);
+      if (!selected) return;
+      // 이미 굵게 처리된 경우 토글(제거)
+      if (selected.startsWith('**') && selected.endsWith('**')) {
+        const inner = selected.slice(2, -2);
+        el.value = val.slice(0, start) + inner + val.slice(end);
+        el.setSelectionRange(start, start + inner.length);
+      } else {
+        const replaced = '**' + selected + '**';
+        el.value = val.slice(0, start) + replaced + val.slice(end);
+        el.setSelectionRange(start, start + replaced.length);
+      }
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+});
 
 loadFromDB();
 </script>
