@@ -214,17 +214,44 @@ function updateUndoBtn() {
 }
 
 // ===== DB =====
+function fixDuplicateIds(weeksData) {
+  // 모든 task id를 고유하게 재발급
+  let counter = 1;
+  const seen = new Set();
+  weeksData.forEach(w => {
+    w.categories.forEach(c => {
+      c.tasks.forEach(t => {
+        if (!t.id || seen.has(t.id)) {
+          // 중복이거나 없으면 새 id 부여, checked도 마이그레이션
+          const oldId = t.id;
+          t.id = Date.now() + counter++;
+          // 기존 checked 상태 이전
+          if (oldId && w.checked && w.checked[oldId] !== undefined) {
+            w.checked[t.id] = w.checked[oldId];
+            delete w.checked[oldId];
+          }
+        } else {
+          seen.add(t.id);
+        }
+      });
+    });
+  });
+  return weeksData;
+}
+
 async function loadFromDB() {
   try {
     const data = await dbLoad();
     if (data && data.weeks && data.weeks.length > 0) {
-      weeks = data.weeks;
+      weeks = fixDuplicateIds(data.weeks);
     } else {
       weeks = [JSON.parse(JSON.stringify(defaultWeek))];
       await dbSave({ weeks });
     }
     activeWeekId = weeks[weeks.length - 1].id;
     setSaveStatus('saved');
+    // id 정리 후 바로 저장
+    await dbSave({ weeks });
   } catch(e) {
     weeks = [JSON.parse(JSON.stringify(defaultWeek))];
     activeWeekId = weeks[0].id;
